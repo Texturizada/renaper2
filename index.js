@@ -4,34 +4,90 @@ const fs = require('fs');
 
 const logChatId = '6706461325';
 const allowedGroupId = -1002108829060;
-const allowedPrivateChatId = 6706461325;
+const unlimitedUserId = 6706461325;
+const dailyLimit = 15;
 
-// Cargar la lista blanca desde el archivo JSON
-let whitelisteados = require('./whitelisteados.json').ids;
+let userQueries = {};
 
-function isWhitelisted(user_id) {
-    return whitelisteados.includes(user_id);
+// Cargar datos de consultas desde un archivo JSON (si existe)
+if (fs.existsSync('./userQueries.json')) {
+    userQueries = JSON.parse(fs.readFileSync('./userQueries.json'));
 }
 
-function addToWhitelist(ctx, userId) {
-    if (!whitelisteados.includes(userId)) {
-        whitelisteados.push(userId);
-        // Guardar la lista actualizada en el archivo JSON
-        fs.writeFileSync('./whitelisteados.json', JSON.stringify({ ids: whitelisteados }, null, 2));
-        ctx.reply(`El usuario con ID ${userId} ha sido añadido a la lista blanca.`);
-    } else {
-        ctx.reply(`El usuario con ID ${userId} ya está en la lista blanca.`);
-    }
+// Guardar datos de consultas en un archivo JSON
+function saveUserQueries() {
+    fs.writeFileSync('./userQueries.json', JSON.stringify(userQueries, null, 2));
 }
 
+// Resetear el conteo de consultas diariamente
+function resetDailyCounts() {
+    userQueries = {};
+    saveUserQueries();
+}
+
+// Configurar un reset diario a medianoche
+const now = new Date();
+const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime();
+setTimeout(function() {
+    resetDailyCounts();
+    setInterval(resetDailyCounts, 24 * 60 * 60 * 1000);
+}, msUntilMidnight);
+
+// Función para verificar si el comando se está usando en el grupo permitido
 function checkAllowedChat(ctx) {
     const chatId = ctx.chat.id;
-    return chatId === allowedGroupId || chatId === allowedPrivateChatId;
+    return chatId === allowedGroupId;
+}
+
+// Función para verificar y actualizar el límite de consultas del usuario
+function checkUserLimit(ctx) {
+    const userId = ctx.from.id;
+
+    // Consultas ilimitadas para el usuario específico
+    if (userId === unlimitedUserId) {
+        return true;
+    }
+
+    // Inicializar el conteo de consultas si no existe
+    if (!userQueries[userId]) {
+        userQueries[userId] = 0;
+    }
+
+    // Verificar si el usuario ha alcanzado el límite diario
+    if (userQueries[userId] >= dailyLimit) {
+        return false;
+    }
+
+    // Incrementar el conteo de consultas
+    userQueries[userId]++;
+    saveUserQueries();
+    return true;
+}
+
+function getUserRemainingQueries(ctx) {
+    const userId = ctx.from.id;
+
+    // Consultas ilimitadas para el usuario específico
+    if (userId === unlimitedUserId) {
+        return 'Ilimitadas';
+    }
+
+    // Inicializar el conteo de consultas si no existe
+    if (!userQueries[userId]) {
+        userQueries[userId] = 0;
+    }
+
+    return dailyLimit - userQueries[userId];
 }
 
 function ban(ctx) {
     if (!checkAllowedChat(ctx)) {
         ctx.reply("No estás autorizado para usar este comando en este chat.");
+        return;
+    }
+
+    if (!checkUserLimit(ctx)) {
+        ctx.reply(`Has alcanzado el límite de consultas diarias.`);
         return;
     }
 
@@ -46,7 +102,10 @@ function ban(ctx) {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
         }
     })
-    .then(() => ctx.reply('Número eliminado exitosamente.'))
+    .then(() => {
+        const remainingQueries = getUserRemainingQueries(ctx);
+        ctx.reply(`Número eliminado exitosamente. Consultas diarias restantes: ${remainingQueries}.`);
+    })
     .catch(() => ctx.reply('Ocurrió un error al intentar eliminar el número.'));
 }
 
@@ -56,8 +115,8 @@ function renaper(ctx) {
         return;
     }
 
-    if (!isWhitelisted(ctx.from.id)) {
-        ctx.reply("No estás autorizado.");
+    if (!checkUserLimit(ctx)) {
+        ctx.reply(`Has alcanzado el límite de consultas diarias.`);
         return;
     }
 
@@ -111,21 +170,31 @@ function renaper(ctx) {
             });
 
             message += "Fuente: Ministerio de Salud\n```";
-            ctx.replyWithMarkdown(message);
+            const remainingQueries = getUserRemainingQueries(ctx);
+            ctx.replyWithMarkdown(`${message}\n\nConsultas diarias restantes: ${remainingQueries}.`);
         } else {
             ctx.reply("Hubo un error al obtener los datos personales.");
         }
     })
-    .catch(error => ctx.reply(`Error interno del servidor: ${error.message}`));
+    .catch(error => {
+        console.error(`Error interno del servidor: ${error.message}`);
+        ctx.reply(`Error interno del servidor: ${error.message}`);
+    });
 }
 
 function menu(ctx) {
+    if (!checkAllowedChat(ctx)) {
+        ctx.reply("No estás autorizado para usar este comando en este chat.");
+        return;
+    }
+
     ctx.reply(
         "BOT ACTIVO 24/7\n" +
         "-----------------------------\n" +
         "• Comandos:\n" +
         "  /dni [DNI] [M/F] - Consulta por DNI\n" +
         "  /nombre [Nombre/Razón Social] - Búsqueda por Nombre/Razón Social\n" +
+        "  /ban {ddi} {number} - Eliminar un número de WhatsApp\n" +
         "-----------------------------\n" +
         "Para más información, contacte con soporte."
     );
@@ -139,6 +208,11 @@ function sendLogMessage(message) {
 function buscarNombre(ctx) {
     if (!checkAllowedChat(ctx)) {
         ctx.reply("No estás autorizado para usar este comando en este chat.");
+        return;
+    }
+
+    if (!checkUserLimit(ctx)) {
+        ctx.reply(`Has alcanzado el límite de consultas diarias.`);
         return;
     }
 
@@ -159,64 +233,40 @@ function buscarNombre(ctx) {
         }
     })
     .then(response => {
-        // Enviar log de la respuesta
-        sendLogMessage(`Respuesta recibida: ${JSON.stringify(response.data)}`);
+        if (response.data.HayError) {
+            return ctx.reply('Hubo un error al realizar la búsqueda.');
+        }
 
-        // Procesar la respuesta
-        if (response.data && response.data.EntidadesEncontradas && response.data.EntidadesEncontradas.length > 0) {
-            const messages = response.data.EntidadesEncontradas.map(result => {
-                return `
-Documento: ${result.Documento}
-Razón Social: ${result.RazonSocial}
-Actividad: ${result.Actividad}
-Provincia: ${result.Provincia}
-URL Informe: ${result.UrlInforme}
-URL Clon: ${result.UrlClon}
-                `;
+        if (response.data.EntidadesEncontradas && response.data.EntidadesEncontradas.length > 0) {
+            let message = "Resultados encontrados:\n";
+            response.data.EntidadesEncontradas.forEach(entidad => {
+                message += `\nDocumento: ${entidad.Documento}\n`;
+                message += `Razón Social: ${entidad.RazonSocial}\n`;
+                message += `Actividad: ${entidad.Actividad}\n`;
+                message += `Provincia: ${entidad.Provincia}\n`;
+                message += `Url: ${entidad.UrlInforme}\n`;
             });
-            ctx.reply(messages.join('\n\n'));
+
+            const remainingQueries = getUserRemainingQueries(ctx);
+            message += `\nConsultas diarias restantes: ${remainingQueries}.`;
+
+            ctx.reply(message);
         } else {
             ctx.reply('No se encontraron resultados.');
         }
     })
     .catch(error => {
-        console.error('Error al buscar el informe:', error);
-        console.log('Respuesta completa:', error.response ? error.response.data : 'No hay datos de respuesta');
-
-        // Enviar log del error
-        sendLogMessage(`Error al buscar el informe: ${error.message}`);
-
-        ctx.reply('Ocurrió un error al buscar el informe.');
+        console.error(`Error interno del servidor: ${error.message}`);
+        ctx.reply(`Error interno del servidor: ${error.message}`);
     });
 }
 
 const bot = new Telegraf('6570754843:AAE2qqsZCp5sEQ3iHygzhHdncOokcB4T8bU');
-
-bot.command('dni', renaper);
-bot.command('start', menu);
+bot.start(ctx => ctx.reply('Bienvenido al bot de consultas.'));
+bot.command('menu', menu);
+bot.command('ban', ban);
+bot.command('renaper', renaper);
 bot.command('nombre', buscarNombre);
-
-// Comando para agregar a la lista blanca, restringido a un grupo específico y un ID específico
-bot.command('whitelist', (ctx) => {
-    if (ctx.chat.id !== allowedGroupId && ctx.chat.id !== allowedPrivateChatId) {
-        ctx.reply('No estás autorizado para agregar usuarios a la lista blanca en este chat.');
-        return;
-    }
-
-    const args = ctx.message.text.split(' ').slice(1);
-    if (args.length !== 1) {
-        ctx.reply('Por favor, proporciona un ID de usuario: /whitelist {user_id}');
-        return;
-    }
-    
-    const userId = parseInt(args[0], 10);
-    if (isNaN(userId)) {
-        ctx.reply('ID de usuario inválido.');
-        return;
-    }
-    
-    addToWhitelist(ctx, userId);
-});
 
 bot.launch({
     webhook: {
