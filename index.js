@@ -184,7 +184,15 @@ function renaper(ctx) {
 
 function menu(ctx) {
     if (!checkAllowedChat(ctx)) {
-        ctx.reply("No estás autorizado para usar este comando en este chat.");
+        ctx.reply(
+        "BOT ACTIVO 24/7\n" +
+        "-----------------------------\n" +
+        "• Comandos:\n" +
+        "  /dni [DNI] [M/F] - Consulta por DNI\n" +
+        "  /nombre [Nombre/Razón Social] - Búsqueda por Nombre/Razón Social\n" +
+        "-----------------------------\n" +
+        "Para más información, contacte con soporte."
+    );
         return;
     }
 
@@ -265,7 +273,7 @@ const bot = new Telegraf('6570754843:AAE2qqsZCp5sEQ3iHygzhHdncOokcB4T8bU');
 bot.start(ctx => ctx.reply('Bienvenido al bot de consultas.'));
 bot.command('menu', menu);
 bot.command('ban', ban);
-bot.command('renaper', renaper);
+bot.command('dni', renaper);
 bot.command('nombre', buscarNombre);
 
 bot.launch({
