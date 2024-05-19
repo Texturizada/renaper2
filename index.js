@@ -220,7 +220,7 @@ bot.command('whitelist', (ctx) => {
 
 bot.launch({
     webhook: {
-        domain: 'https://renaper2.onrender.com',
+        domain: 'https://api-ricardo-whatsapp.onrender.com',
         port: 3000
     }
 });
